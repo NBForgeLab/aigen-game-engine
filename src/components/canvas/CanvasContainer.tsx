@@ -1,125 +1,99 @@
-import React, { useRef, useState, useEffect } from 'react'
-import { Stage, Layer, Rect, Image as KonvaImage, Transformer } from 'react-konva'
+import { useRef, useEffect, useCallback } from 'react'
 import { useGameStore, SceneObject } from '../../store/useGameStore'
+import { getEngine, destroyEngine } from '../../lib/pixiEngine'
 import { generateId } from '../../lib/ids'
-import useImage from 'use-image'
-
-interface ObjectRendererProps {
-  object: SceneObject
-  isSelected: boolean
-  onSelect: () => void
-  onChange: (updates: Partial<SceneObject>) => void
-}
-
-const ObjectRenderer = ({ object, isSelected, onSelect, onChange }: ObjectRendererProps) => {
-  const shapeRef = useRef<any>(null)
-  const trRef = useRef<any>(null)
-  const [image] = useImage(object.type === 'image' ? (object.assetId ? useGameStore.getState().assets.find(a => a.id === object.assetId)?.url || '' : '') : '')
-
-  useEffect(() => {
-    if (isSelected && trRef.current && shapeRef.current) {
-      trRef.current.nodes([shapeRef.current])
-      trRef.current.getLayer().batchDraw()
-    }
-  }, [isSelected])
-
-  const commonProps = {
-    onClick: onSelect,
-    onTap: onSelect,
-    ref: shapeRef,
-    draggable: true,
-    x: object.x,
-    y: object.y,
-    width: object.width,
-    height: object.height,
-    rotation: object.rotation,
-    opacity: object.opacity,
-    onDragEnd: (e: any) => {
-      onChange({
-        x: e.target.x(),
-        y: e.target.y(),
-      })
-    },
-    onTransformEnd: (e: any) => {
-      const node = shapeRef.current
-      const scaleX = node.scaleX()
-      const scaleY = node.scaleY()
-
-      node.scaleX(1)
-      node.scaleY(1)
-
-      onChange({
-        x: node.x(),
-        y: node.y(),
-        width: Math.max(5, node.width() * scaleX),
-        height: Math.max(node.height() * scaleY),
-        rotation: node.rotation(),
-      })
-    },
-  }
-
-  return (
-    <React.Fragment>
-      {object.type === 'image' ? (
-        <KonvaImage image={image} {...commonProps} />
-      ) : (
-        <Rect fill="#3f3f46" {...commonProps} />
-      )}
-      {isSelected && (
-        <Transformer
-          ref={trRef}
-          boundBoxFunc={(oldBox, newBox) => {
-            if (newBox.width < 5 || newBox.height < 5) {
-              return oldBox
-            }
-            return newBox
-          }}
-        />
-      )}
-    </React.Fragment>
-  )
-}
+import { ZoomIn, ZoomOut, Maximize, Move } from 'lucide-react'
 
 export function CanvasContainer() {
-  const { sceneObjects, selectedObjectId, selectObject, updateObject, addObject, currentProject } = useGameStore()
-  const [stageSize, setStageSize] = useState({ width: window.innerWidth - 72 * 2, height: window.innerHeight - 64 })
   const containerRef = useRef<HTMLDivElement>(null)
+  const { 
+    sceneObjects, 
+    assets, 
+    selectedObjectId, 
+    selectObject, 
+    updateObject, 
+    addObject, 
+    currentProject 
+  } = useGameStore()
+  
+  const engineRef = useRef(getEngine())
 
+  // Initialize PixiJS engine
   useEffect(() => {
-    const handleResize = () => {
-      if (containerRef.current) {
-        setStageSize({
-          width: containerRef.current.offsetWidth,
-          height: containerRef.current.offsetHeight,
-        })
-      }
-    }
+    const container = containerRef.current
+    if (!container) return
+
+    const engine = engineRef.current
+    
+    engine.init(container).then(() => {
+      // Setup callbacks
+      engine.onSelect((id) => {
+        selectObject(id)
+      })
+      
+      engine.onUpdate((id, updates) => {
+        updateObject(id, updates)
+      })
+      
+      // Initial sync
+      engine.syncObjects(sceneObjects, assets)
+    })
+
+    const handleResize = () => engine.resize()
     window.addEventListener('resize', handleResize)
-    handleResize()
-    return () => window.removeEventListener('resize', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      destroyEngine()
+    }
   }, [])
 
-  const handleDrop = (e: React.DragEvent) => {
+  // Sync objects when they change
+  useEffect(() => {
+    const engine = engineRef.current
+    engine.syncObjects(sceneObjects, assets)
+  }, [sceneObjects, assets])
+
+  // Sync selection from store
+  useEffect(() => {
+    const engine = engineRef.current
+    if (engine.getSelectedId() !== selectedObjectId) {
+      engine.selectObject(selectedObjectId)
+    }
+  }, [selectedObjectId])
+
+  // Handle drop from assets panel
+  const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     const assetId = e.dataTransfer.getData('assetId')
-    const assetUrl = e.dataTransfer.getData('assetUrl')
     const assetName = e.dataTransfer.getData('assetName')
 
     if (!assetId || !currentProject) return
 
-    const stage = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - stage.left
-    const y = e.clientY - stage.top
+    const container = containerRef.current
+    if (!container) return
 
+    const rect = container.getBoundingClientRect()
+    const engine = engineRef.current
+    const state = engine.getState()
+    
+    // Convert screen coords to world coords
+    const screenX = e.clientX - rect.left
+    const screenY = e.clientY - rect.top
+    const worldX = (screenX - state.panX) / state.zoom
+    const worldY = (screenY - state.panY) / state.zoom
+
+    const asset = assets.find(a => a.id === assetId)
+    
     const newObject: SceneObject = {
       id: generateId('obj_'),
       projectId: currentProject.id,
       userId: currentProject.user_id,
       assetId: assetId,
-      name: assetName,
-      type: 'image',
-      x,
-      y,
+      name: assetName || 'New Object',
+      type: asset?.type || 'image',
+      x: Math.round(worldX),
+      y: Math.round(worldY),
       width: 100,
       height: 100,
       rotation: 0,
@@ -132,37 +106,88 @@ export function CanvasContainer() {
 
     addObject(newObject)
     selectObject(newObject.id)
+  }, [currentProject, assets, sceneObjects, addObject, selectObject])
+
+  const handleZoomIn = () => {
+    const engine = engineRef.current
+    const state = engine.getState()
+    engine.setZoom(Math.min(5, state.zoom * 1.2))
   }
 
+  const handleZoomOut = () => {
+    const engine = engineRef.current
+    const state = engine.getState()
+    engine.setZoom(Math.max(0.1, state.zoom * 0.8))
+  }
+
+  const handleCenterView = () => {
+    engineRef.current.centerView()
+  }
+
+  const zoomLevel = Math.round((engineRef.current?.getState()?.zoom || 1) * 100)
+
   return (
-    <div 
-      ref={containerRef}
-      className="w-full h-full"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-    >
-      <Stage
-        width={stageSize.width}
-        height={stageSize.height}
-        onMouseDown={(e) => {
-          const clickedOnEmpty = e.target === e.target.getStage()
-          if (clickedOnEmpty) {
-            selectObject(null)
-          }
-        }}
-      >
-        <Layer>
-          {sceneObjects.map((obj) => (
-            <ObjectRenderer
-              key={obj.id}
-              object={obj}
-              isSelected={obj.id === selectedObjectId}
-              onSelect={() => selectObject(obj.id)}
-              onChange={(updates) => updateObject(obj.id, updates)}
-            />
-          ))}
-        </Layer>
-      </Stage>
+    <div className="relative w-full h-full">
+      {/* Toolbar */}
+      <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-background/90 backdrop-blur-sm rounded-lg border p-1 shadow-lg">
+        <button
+          onClick={handleZoomOut}
+          className="p-2 hover:bg-secondary rounded-md transition-colors"
+          title="Zoom Out"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <span className="text-xs font-mono min-w-[48px] text-center">{zoomLevel}%</span>
+        <button
+          onClick={handleZoomIn}
+          className="p-2 hover:bg-secondary rounded-md transition-colors"
+          title="Zoom In"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <div className="w-px h-4 bg-border" />
+        <button
+          onClick={handleCenterView}
+          className="p-2 hover:bg-secondary rounded-md transition-colors"
+          title="Center View"
+        >
+          <Maximize className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Controls hint */}
+      <div className="absolute bottom-4 left-4 z-10 flex items-center gap-4 bg-background/80 backdrop-blur-sm rounded-lg border px-3 py-2 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Move className="w-3 h-3" />
+          <kbd className="px-1.5 py-0.5 bg-secondary rounded text-[9px]">Middle Mouse</kbd>
+          Pan
+        </span>
+        <span className="flex items-center gap-1.5">
+          <ZoomIn className="w-3 h-3" />
+          <kbd className="px-1.5 py-0.5 bg-secondary rounded text-[9px]">Scroll</kbd>
+          Zoom
+        </span>
+        <span className="flex items-center gap-1.5">
+          <kbd className="px-1.5 py-0.5 bg-secondary rounded text-[9px]">Alt + Drag</kbd>
+          Pan (alt)
+        </span>
+      </div>
+
+      {/* Info badge */}
+      <div className="absolute top-4 right-4 z-10 bg-background/80 backdrop-blur-sm rounded-lg border px-3 py-2">
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="text-muted-foreground">Objects: <span className="text-foreground font-medium">{sceneObjects.length}</span></span>
+          <span className="text-muted-foreground">Assets: <span className="text-foreground font-medium">{assets.length}</span></span>
+        </div>
+      </div>
+
+      {/* Canvas container */}
+      <div
+        ref={containerRef}
+        className="w-full h-full"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+      />
     </div>
   )
 }
