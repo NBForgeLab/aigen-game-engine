@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Image, Layers, Plus, Search, Trash2, Volume2, ChevronRight, Eye, EyeOff, GripVertical, Box } from 'lucide-react'
+import { Image, Layers, Plus, Search, Trash2, Volume2, ChevronRight, Eye, EyeOff, GripVertical, Box, ArrowUp, ArrowDown, Copy } from 'lucide-react'
 import { useGameStore, SceneObject, Asset } from '../../store/useGameStore'
 import { blink } from '../../lib/blink'
 import { generateId } from '../../lib/ids'
@@ -9,7 +9,7 @@ import { getEngine } from '../../lib/pixiEngine'
 export function SidebarLeft() {
   const [activeTab, setActiveTab] = useState<'assets' | 'hierarchy'>('assets')
   const [searchQuery, setSearchQuery] = useState('')
-  const { assets, addAsset, sceneObjects, removeObject, updateObject, selectObject, selectedObjectId, currentProject, addObject } = useGameStore()
+  const { assets, addAsset, removeAsset, sceneObjects, removeObject, updateObject, selectObject, selectedObjectId, currentProject, addObject, setSceneObjects } = useGameStore()
 
   const filteredAssets = assets.filter(asset => 
     asset.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -62,11 +62,49 @@ export function SidebarLeft() {
   const handleDeleteAsset = async (asset: Asset) => {
     try {
       await blink.db.assets.delete(asset.id)
-      // Remove from local state would require a new store action
+      removeAsset(asset.id)
       toast.success(`Deleted asset "${asset.name}"`)
     } catch (error) {
       console.error('Delete failed:', error)
       toast.error('Failed to delete asset')
+    }
+  }
+
+  const handleDuplicateObject = (obj: SceneObject) => {
+    if (!currentProject) return
+    
+    const newObject: SceneObject = {
+      ...obj,
+      id: generateId('obj_'),
+      name: `${obj.name} (copy)`,
+      x: obj.x + 20,
+      y: obj.y + 20,
+      zIndex: sceneObjects.length
+    }
+    
+    addObject(newObject)
+    selectObject(newObject.id)
+    toast.success(`Duplicated "${obj.name}"`)
+  }
+
+  const handleMoveLayer = (obj: SceneObject, direction: 'up' | 'down') => {
+    const currentIndex = sceneObjects.findIndex(o => o.id === obj.id)
+    if (direction === 'up' && currentIndex < sceneObjects.length - 1) {
+      const newObjects = [...sceneObjects]
+      const temp = newObjects[currentIndex]
+      newObjects[currentIndex] = newObjects[currentIndex + 1]
+      newObjects[currentIndex + 1] = temp
+      // Update z-indices
+      const updated = newObjects.map((o, i) => ({ ...o, zIndex: i }))
+      setSceneObjects(updated)
+    } else if (direction === 'down' && currentIndex > 0) {
+      const newObjects = [...sceneObjects]
+      const temp = newObjects[currentIndex]
+      newObjects[currentIndex] = newObjects[currentIndex - 1]
+      newObjects[currentIndex - 1] = temp
+      // Update z-indices
+      const updated = newObjects.map((o, i) => ({ ...o, zIndex: i }))
+      setSceneObjects(updated)
     }
   }
 
@@ -196,6 +234,16 @@ export function SidebarLeft() {
                         title="Add to scene"
                       >
                         <Plus className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeleteAsset(asset)
+                        }}
+                        className="p-1.5 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                        title="Delete asset"
+                      >
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
                   </div>

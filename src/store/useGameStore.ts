@@ -35,17 +35,20 @@ interface GameState {
   sceneObjects: SceneObject[]
   selectedObjectId: string | null
   isExporting: boolean
+  isSaving: boolean
   
   // Actions
   setCurrentProject: (project: any) => void
   setAssets: (assets: Asset[]) => void
   addAsset: (asset: Asset) => void
+  removeAsset: (id: string) => void
   setSceneObjects: (objects: SceneObject[]) => void
   addObject: (object: SceneObject) => void
   updateObject: (id: string, updates: Partial<SceneObject>) => void
   removeObject: (id: string) => void
   selectObject: (id: string | null) => void
   setExporting: (isExporting: boolean) => void
+  setSaving: (isSaving: boolean) => void
 }
 
 export const useGameStore = create<GameState>((set) => ({
@@ -54,10 +57,12 @@ export const useGameStore = create<GameState>((set) => ({
   sceneObjects: [],
   selectedObjectId: null,
   isExporting: false,
+  isSaving: false,
 
   setCurrentProject: (project) => set({ currentProject: project }),
   setAssets: (assets) => set({ assets }),
   addAsset: (asset) => set((state) => ({ assets: [...state.assets, asset] })),
+  removeAsset: (id) => set((state) => ({ assets: state.assets.filter((a) => a.id !== id) })),
   setSceneObjects: (objects) => set({ sceneObjects: objects }),
   addObject: (object) => set((state) => ({ sceneObjects: [...state.sceneObjects, object] })),
   updateObject: (id, updates) => set((state) => ({
@@ -69,4 +74,5 @@ export const useGameStore = create<GameState>((set) => ({
   })),
   selectObject: (id) => set({ selectedObjectId: id }),
   setExporting: (isExporting) => set({ isExporting }),
+  setSaving: (isSaving) => set({ isSaving }),
 }))
