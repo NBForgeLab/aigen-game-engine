@@ -8,10 +8,8 @@ export function CanvasContainer() {
   const appRef = useRef<PIXI.Application | null>(null)
   const stageRef = useRef<PIXI.Container | null>(null)
   const objectsMapRef = useRef<Map<string, PIXI.Container>>(new Map())
-  const selectedObjectRef = useRef<string | null>(null)
-  const [panX, setPanX] = useState(0)
-  const [panY, setPanY] = useState(0)
-  const [zoom, setZoom] = useState(1)
+  const cameraRef = useRef({ x: 0, y: 0, zoom: 1 })
+  const panStateRef = useRef({ isDragging: false, startX: 0, startY: 0 })
 
   const { sceneObjects, selectedObjectId, selectObject, updateObject, addObject, currentProject } = useGameStore()
 
@@ -20,10 +18,13 @@ export function CanvasContainer() {
 
     const initializePixi = async () => {
       try {
+        const width = containerRef.current!.clientWidth
+        const height = containerRef.current!.clientHeight
+
         const app = new PIXI.Application({
-          width: containerRef.current!.clientWidth,
-          height: containerRef.current!.clientHeight,
-          backgroundColor: 0x121214,
+          width,
+          height,
+          backgroundColor: 0x1a1a1a,
           antialias: true,
           resolution: window.devicePixelRatio || 1,
         })
@@ -35,50 +36,70 @@ export function CanvasContainer() {
         app.stage.addChild(stage)
         stageRef.current = stage
 
-        let isDragging = false
-        let lastX = 0
-        let lastY = 0
+        app.canvas.style.display = 'block'
 
-        app.canvas.addEventListener('mousedown', (e) => {
-          isDragging = true
-          lastX = e.clientX
-          lastY = e.clientY
-        })
+        const handleMouseDown = (e: MouseEvent) => {
+          if (e.button === 2 || (e.button === 0 && e.ctrlKey)) {
+            panStateRef.current = { isDragging: true, startX: e.clientX, startY: e.clientY }
+            app.canvas.style.cursor = 'grabbing'
+            e.preventDefault()
+          }
+        }
 
-        app.canvas.addEventListener('mousemove', (e) => {
-          if (isDragging) {
-            const deltaX = e.clientX - lastX
-            const deltaY = e.clientY - lastY
+        const handleMouseMove = (e: MouseEvent) => {
+          if (panStateRef.current.isDragging) {
+            const deltaX = e.clientX - panStateRef.current.startX
+            const deltaY = e.clientY - panStateRef.current.startY
+
             stage.x += deltaX
             stage.y += deltaY
-            setPanX(stage.x)
-            setPanY(stage.y)
-            lastX = e.clientX
-            lastY = e.clientY
+            cameraRef.current.x += deltaX / cameraRef.current.zoom
+            cameraRef.current.y += deltaY / cameraRef.current.zoom
+
+            panStateRef.current.startX = e.clientX
+            panStateRef.current.startY = e.clientY
           }
-        })
+        }
 
-        app.canvas.addEventListener('mouseup', () => {
-          isDragging = false
-        })
+        const handleMouseUp = () => {
+          panStateRef.current.isDragging = false
+          app.canvas.style.cursor = 'default'
+        }
 
-        app.canvas.addEventListener('wheel', (e) => {
+        const handleWheel = (e: WheelEvent) => {
           e.preventDefault()
-          const delta = e.deltaY > 0 ? 0.9 : 1.1
-          const newZoom = Math.max(0.5, Math.min(3, zoom * delta))
-          setZoom(newZoom)
+
+          const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
+          const newZoom = Math.max(0.1, Math.min(5, cameraRef.current.zoom * zoomFactor))
 
           const rect = app.canvas.getBoundingClientRect()
-          const mouseX = e.clientX - rect.left
-          const mouseY = e.clientY - rect.top
+          const mouseX = (e.clientX - rect.left) / cameraRef.current.zoom
+          const mouseY = (e.clientY - rect.top) / cameraRef.current.zoom
 
-          stage.pivot.x = (stage.pivot.x + mouseX / zoom) * (newZoom / zoom) - mouseX / newZoom
-          stage.pivot.y = (stage.pivot.y + mouseY / zoom) * (newZoom / zoom) - mouseY / newZoom
+          const worldX = (e.clientX - rect.left) / newZoom + (cameraRef.current.x - stage.x / newZoom)
+          const worldY = (e.clientY - rect.top) / newZoom + (cameraRef.current.y - stage.y / newZoom)
 
           stage.scale.set(newZoom)
-        })
+          stage.x = -worldX * newZoom + (e.clientX - rect.left)
+          stage.y = -worldY * newZoom + (e.clientY - rect.top)
 
-        return app
+          cameraRef.current.zoom = newZoom
+          cameraRef.current.x = worldX
+          cameraRef.current.y = worldY
+        }
+
+        app.canvas.addEventListener('mousedown', handleMouseDown)
+        app.canvas.addEventListener('mousemove', handleMouseMove)
+        app.canvas.addEventListener('mouseup', handleMouseUp)
+        app.canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+        app.canvas.addEventListener('wheel', handleWheel, { passive: false })
+
+        return () => {
+          app.canvas.removeEventListener('mousedown', handleMouseDown)
+          app.canvas.removeEventListener('mousemove', handleMouseMove)
+          app.canvas.removeEventListener('mouseup', handleMouseUp)
+          app.canvas.removeEventListener('wheel', handleWheel)
+        }
       } catch (error) {
         console.error('Failed to initialize Pixi:', error)
       }
@@ -95,6 +116,7 @@ export function CanvasContainer() {
     }
 
     window.addEventListener('resize', handleResize)
+
     return () => {
       window.removeEventListener('resize', handleResize)
       if (appRef.current) {
@@ -112,41 +134,43 @@ export function CanvasContainer() {
 
       if (!container) {
         container = new PIXI.Container()
-        container.interactive = true
+        container.eventMode = 'static'
         container.cursor = 'pointer'
+        container.hitArea = new PIXI.Rectangle(0, 0, obj.width, obj.height)
 
-        const graphics = new PIXI.Graphics()
-        graphics.beginFill(0x3f3f46)
-        graphics.drawRect(0, 0, obj.width, obj.height)
-        graphics.endFill()
-        graphics.lineStyle(2, obj.id === selectedObjectId ? 0x3b82f6 : 0x666666)
-        graphics.drawRect(0, 0, obj.width, obj.height)
+        const rect = new PIXI.Graphics()
+        rect.fill(0x2a2a2a)
+        rect.rect(0, 0, obj.width, obj.height)
+        container.addChild(rect)
 
-        container.addChild(graphics)
-        container.objectData = obj
+        const border = new PIXI.Graphics()
+        container.addChild(border)
+
+        container.addChild(rect)
         stageRef.current!.addChild(container)
         objectsMapRef.current.set(obj.id, container)
 
         let isDraggingObject = false
-        let startX = 0
-        let startY = 0
+        let dragStartX = 0
+        let dragStartY = 0
 
         container.on('pointerdown', (e) => {
-          isDraggingObject = true
-          startX = e.global.x
-          startY = e.global.y
-          selectObject(obj.id)
-          e.stopPropagation()
+          if (!panStateRef.current.isDragging) {
+            isDraggingObject = true
+            dragStartX = e.global.x / cameraRef.current.zoom
+            dragStartY = e.global.y / cameraRef.current.zoom
+            selectObject(obj.id)
+            e.stopPropagation()
+          }
         })
 
         container.on('pointermove', (e) => {
           if (isDraggingObject) {
-            const deltaX = e.global.x - startX
-            const deltaY = e.global.y - startY
-            container!.x += deltaX
-            container!.y += deltaY
-            startX = e.global.x
-            startY = e.global.y
+            const newX = e.global.x / cameraRef.current.zoom - dragStartX + obj.x
+            const newY = e.global.y / cameraRef.current.zoom - dragStartY + obj.y
+
+            container!.x = newX
+            container!.y = newY
             e.stopPropagation()
           }
         })
@@ -172,28 +196,34 @@ export function CanvasContainer() {
       container.alpha = obj.opacity
       container.visible = obj.isVisible
       container.zIndex = obj.zIndex
+      container.hitArea = new PIXI.Rectangle(0, 0, obj.width, obj.height)
 
-      if (container.children.length > 0 && container.children[0] instanceof PIXI.Graphics) {
-        const graphics = container.children[0] as PIXI.Graphics
-        graphics.clear()
-        graphics.beginFill(0x3f3f46)
-        graphics.drawRect(0, 0, obj.width, obj.height)
-        graphics.endFill()
-        graphics.lineStyle(2, obj.id === selectedObjectId ? 0x3b82f6 : 0x666666)
-        graphics.drawRect(0, 0, obj.width, obj.height)
+      if (container.children.length >= 2) {
+        const rect = container.children[0] as PIXI.Graphics
+        const border = container.children[1] as PIXI.Graphics
+
+        rect.clear()
+        rect.fill(0x2a2a2a)
+        rect.rect(0, 0, obj.width, obj.height)
+
+        border.clear()
+        if (obj.id === selectedObjectId) {
+          border.lineStyle(2, 0x3b82f6, 1)
+          border.rect(0, 0, obj.width, obj.height)
+        }
       }
     })
 
-    objectsMapRef.current.forEach((container, id) => {
-      if (!sceneObjects.find((obj) => obj.id === id)) {
-        stageRef.current!.removeChild(container)
-        objectsMapRef.current.delete(id)
+    const toDelete = Array.from(objectsMapRef.current.keys()).filter(
+      (id) => !sceneObjects.find((obj) => obj.id === id)
+    )
+    toDelete.forEach((id) => {
+      const container = objectsMapRef.current.get(id)
+      if (container && stageRef.current) {
+        stageRef.current.removeChild(container)
       }
+      objectsMapRef.current.delete(id)
     })
-
-    if (selectedObjectId !== selectedObjectRef.current) {
-      selectedObjectRef.current = selectedObjectId
-    }
   }, [sceneObjects, selectedObjectId])
 
   const handleCanvasDrop = (e: React.DragEvent) => {
@@ -204,8 +234,8 @@ export function CanvasContainer() {
     if (!assetId || !currentProject) return
 
     const rect = containerRef.current!.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+    const x = (e.clientX - rect.left) / cameraRef.current.zoom - cameraRef.current.x
+    const y = (e.clientY - rect.top) / cameraRef.current.zoom - cameraRef.current.y
 
     const newObject: SceneObject = {
       id: generateId('obj_'),
@@ -213,11 +243,11 @@ export function CanvasContainer() {
       userId: currentProject.userId,
       assetId: assetId,
       name: assetName,
-      type: 'image',
+      type: 'sprite',
       x,
       y,
-      width: 100,
-      height: 100,
+      width: 64,
+      height: 64,
       rotation: 0,
       opacity: 1,
       properties: {},
@@ -233,7 +263,7 @@ export function CanvasContainer() {
   return (
     <div
       ref={containerRef}
-      className="w-full h-full"
+      className="w-full h-full bg-[#1a1a1a]"
       onDragOver={(e) => e.preventDefault()}
       onDrop={handleCanvasDrop}
       style={{ position: 'relative', overflow: 'hidden' }}

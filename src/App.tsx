@@ -80,7 +80,7 @@ export default function App() {
       <Header />
       <div className="flex flex-1 pt-16 h-full overflow-hidden">
         <SidebarLeft />
-        <main className="flex-1 relative bg-[#121214] industrial-grid overflow-hidden">
+        <main className="flex-1 relative bg-[#121214] overflow-hidden">
           <CanvasContainer />
         </main>
         <SidebarRight />

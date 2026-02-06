@@ -80,7 +80,7 @@ export function SidebarRight() {
               const newObj: SceneObject = {
                 id: generateId('obj_'),
                 projectId: currentProject.id,
-                userId: currentProject.user_id,
+                userId: currentProject.userId,
                 assetId: asset.id,
                 name: asset.name,
                 type: asset.type,
