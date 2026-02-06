@@ -62,13 +62,20 @@ export function CanvasContainer() {
     }
   }, [selectedObjectId])
 
-  // Handle drop from assets panel
+  // Handle drop from assets panel (assets or object templates)
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
+
+    const templateType = e.dataTransfer.getData('templateType')
+    const templateName = e.dataTransfer.getData('templateName')
+    const templateWidth = Number(e.dataTransfer.getData('templateWidth') || '0')
+    const templateHeight = Number(e.dataTransfer.getData('templateHeight') || '0')
+
     const assetId = e.dataTransfer.getData('assetId')
     const assetName = e.dataTransfer.getData('assetName')
 
-    if (!assetId || !currentProject) return
+    if (!currentProject) return
+    if (!templateType && !assetId) return
 
     const container = containerRef.current
     if (!container) return
@@ -83,19 +90,19 @@ export function CanvasContainer() {
     const worldX = (screenX - state.panX) / state.zoom
     const worldY = (screenY - state.panY) / state.zoom
 
-    const asset = assets.find(a => a.id === assetId)
-    
+    const asset = assetId ? assets.find(a => a.id === assetId) : undefined
+
     const newObject: SceneObject = {
       id: generateId('obj_'),
       projectId: currentProject.id,
       userId: currentProject.user_id,
-      assetId: assetId,
-      name: assetName || 'New Object',
-      type: asset?.type || 'image',
+      assetId: assetId || undefined,
+      name: assetName || templateName || asset?.name || 'New Object',
+      type: templateType || asset?.type || 'rect',
       x: Math.round(worldX),
       y: Math.round(worldY),
-      width: 100,
-      height: 100,
+      width: templateType ? (templateWidth || 140) : 100,
+      height: templateType ? (templateHeight || 90) : 100,
       rotation: 0,
       opacity: 1,
       properties: {},

@@ -15,6 +15,11 @@ export function SidebarLeft() {
     asset.name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
+  const objectTemplates = [
+    { type: 'rect' as const, name: 'Rectangle', width: 140, height: 90 },
+    { type: 'rect' as const, name: 'Square', width: 120, height: 120 }
+  ]
+
   const handleUploadAsset = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file || !currentProject) {
@@ -150,6 +155,50 @@ export function SidebarLeft() {
     e.dataTransfer.effectAllowed = 'copy'
   }
 
+  const handleTemplateDragStart = (
+    e: React.DragEvent,
+    template: { type: 'rect'; name: string; width: number; height: number }
+  ) => {
+    e.dataTransfer.setData('templateType', template.type)
+    e.dataTransfer.setData('templateName', template.name)
+    e.dataTransfer.setData('templateWidth', String(template.width))
+    e.dataTransfer.setData('templateHeight', String(template.height))
+    e.dataTransfer.effectAllowed = 'copy'
+  }
+
+  const handleAddTemplateToScene = (template: { type: 'rect'; name: string; width: number; height: number }) => {
+    if (!currentProject) return
+
+    const engine = getEngine()
+    const state = engine.getState()
+
+    // Add at center of current view
+    const centerX = -state.panX / state.zoom + 400
+    const centerY = -state.panY / state.zoom + 300
+
+    const newObject: SceneObject = {
+      id: generateId('obj_'),
+      projectId: currentProject.id,
+      userId: currentProject.user_id,
+      name: template.name,
+      type: template.type,
+      x: Math.round(centerX),
+      y: Math.round(centerY),
+      width: template.width,
+      height: template.height,
+      rotation: 0,
+      opacity: 1,
+      properties: {},
+      logic: '',
+      zIndex: sceneObjects.length,
+      isVisible: true
+    }
+
+    addObject(newObject)
+    selectObject(newObject.id)
+    toast.success(`Added "${template.name}" to scene`)
+  }
+
   return (
     <aside className="sidebar-panel">
       <div className="flex border-b">
@@ -182,6 +231,32 @@ export function SidebarLeft() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-secondary border-none rounded-md pl-9 pr-3 py-2 text-xs focus:ring-1 focus:ring-primary outline-none"
               />
+            </div>
+
+            {/* Objects (templates) */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Objects</p>
+                <p className="text-[10px] text-muted-foreground">Drag to canvas</p>
+              </div>
+              <div className="space-y-1">
+                {objectTemplates.map((tpl) => (
+                  <div
+                    key={tpl.name}
+                    draggable
+                    onDragStart={(e) => handleTemplateDragStart(e, tpl)}
+                    onDoubleClick={() => handleAddTemplateToScene(tpl)}
+                    className="group flex items-center justify-between rounded-md border bg-secondary/50 px-2.5 py-2 text-xs cursor-grab active:cursor-grabbing hover:border-primary transition-colors"
+                    title="Double-click to add to scene\nOr drag to canvas"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Box className="w-3.5 h-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <span className="truncate">{tpl.name}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground">{tpl.width}×{tpl.height}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Asset Grid */}
